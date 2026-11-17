@@ -126,7 +126,7 @@ table.t tr:nth-child(even) td{background:#FAF9F6}
 const APP_VERSION = '1.0.0';
 const LS_KEY = 'managish-inventory-v1';
 const LS_DEVICE = 'managish-inventory-device';
-const COLS = ['items','suppliers','productions','staff','storages','tasks','services','moves','batches','pos','requests','ckreq','ckret','prodlogs','tasklogs','temps','inspections','counts','visits','pricealerts','audit','settings','standing'];
+const COLS = ['equipment', 'eqlogs', 'items','suppliers','productions','staff','storages','tasks','services','moves','batches','pos','requests','ckreq','ckret','prodlogs','tasklogs','temps','inspections','counts','visits','pricealerts','audit','settings','standing'];
 
 /* ---------- utils ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -187,6 +187,8 @@ const DB = {
     if (raw && raw.items) this.data = raw; else this.data = seedData();
     COLS.forEach(c => this.data[c] = this.data[c] || {});
     if (!this.data.settings.main) this.data.settings.main = defaultSettings();
+    migrate(this.data);
+    this.persist();
     this.ready = true;
   },
   persist() { if (!LS.set(LS_KEY, JSON.stringify(this.data)) && !this._warned) { this._warned = true; toast('⚠️ Could not save on this device – connect online storage (Settings)'); } },
@@ -222,6 +224,21 @@ function audit(action, col, obj, msg) {
   if (['moves', 'tasklogs', 'temps'].includes(col) && action === 'add') return; // logged elsewhere, keeps history light
   const a = { id: uid('au'), ts: Date.now(), user: sessionName(), action, col, ref: obj.id, label: obj.name || obj.title || obj.supplierName || '', msg: msg || '' };
   DB.data.audit[a.id] = a; DB.persist(); if (DB.remote) DB.remote.write('audit', a);
+}
+
+/* data migrations (adds new features to tablets that already have data) */
+function migrate(d) {
+  const s = d.settings.main; let ch = false; const now = Date.now();
+  if (!(s.sites || []).includes('Bar')) { s.sites = (s.sites || ['Aljada', 'Cloud Kitchen']).concat(['Bar']); ch = true; }
+  if (!(s.itemCats || []).includes('Bar Supplies')) { s.itemCats = (s.itemCats || []).concat(['Bar Supplies']); ch = true; }
+  if (!s.migBar1) {
+    Object.values(d.storages).forEach(x => { if (x.name === 'Bar Chiller' && x.site === 'Aljada' && !x._del) { x._del = true; x._ts = now; } });
+    [['Beverage Chiller', 'Chiller'], ['Food Chiller', 'Chiller'], ['Cake Display Chiller', 'Chiller'], ['Bar Store (cups & supplies)', 'Dry store']].forEach(([n, ty], i) => { const id = 'spb' + (i + 1); if (!d.storages[id]) d.storages[id] = { id, site: 'Bar', name: n, type: ty, _ts: now }; });
+    [['Bar', 'Coffee machine', 'Coffee'], ['Bar', 'Tea machine', 'Tea'], ['Bar', 'Dishwashing machine', 'Dishwasher'], ['Bar', 'Beverage Chiller', 'Refrigerator'], ['Bar', 'Food Chiller', 'Refrigerator'], ['Bar', 'Cake Display Chiller', 'Refrigerator'], ['Aljada', 'Oven', 'Cooking'], ['Aljada', 'Grill', 'Cooking'], ['Aljada', 'Fryer', 'Cooking'], ['Aljada', 'Hood & extraction', 'Ventilation'], ['Aljada', 'Big Chiller (central)', 'Refrigerator'], ['Aljada', 'Freezer', 'Refrigerator']].forEach(([site, n, ty], i) => { const id = 'eq' + (i + 1); if (!d.equipment[id]) d.equipment[id] = { id, site, name: n, type: ty, brand: '', notes: '', active: true, _ts: now }; });
+    [['Clean coffee machine (group heads, steam wand)', 'Every shift', 'Both'], ['Descale coffee machine', 'Weekly', 'Evening'], ['Clean tea machine', 'Daily', 'Evening'], ['Clean dishwashing machine & filters', 'Daily', 'Evening'], ['Clean beverage chiller', 'Weekly', 'Evening'], ['Clean food chiller', 'Weekly', 'Evening'], ['Clean cake display chiller (glass inside & out)', 'Daily', 'Evening'], ['Wipe bar counter & glass surfaces', 'Every shift', 'Both'], ['Tidy bar store (cups, lids, straws)', 'Daily', 'Morning'], ['Cut fruits & prepare garnishes', 'Daily', 'Morning']].forEach(([n, f, sh], i) => { const id = 'tb' + (i + 1); if (!d.tasks[id]) d.tasks[id] = { id, name: n, type: /Cut fruits/.test(n) ? 'Pre-preparation' : 'Cleaning', freq: f, shift: sh, site: 'Bar', resp: '', active: true, _ts: now }; });
+    s.migBar1 = true; ch = true;
+  }
+  if (ch) { s._ts = now; d.settings.main = s; }
 }
 
 /* Firebase sync (optional – activated when a config is saved in Settings) */
@@ -265,13 +282,13 @@ function defaultSettings() {
     receivers: ['Lydia', 'Melissa', 'Angie', 'Desire', 'MJ', 'Bianka'],
     chillerMax: 4, freezerMax: -18, usageDays: 14, paused: false, pauseText: 'This system is paused. Please check with Lydia.',
     emailjs: { service: '', template: '', key: '' }, dailyEmailHour: 23, lastDailyEmail: '',
-    ai: { endpoint: '', limitAED: 50 }, langs: ['en', 'ar'], sites: ['Aljada', 'Cloud Kitchen'],
+    ai: { endpoint: '', limitAED: 50 }, langs: ['en', 'ar'], sites: ['Aljada', 'Cloud Kitchen', 'Bar'],
     wasteReasons: ['Expired', 'Spoiled', 'Burnt / overcooked', 'Dropped', 'Returned dish', 'Production rejected', 'Wrong storage', 'Other'],
     takeReasons: ['Service / line', 'For production', 'Prep (mise en place)', 'Other'],
     returnReasons: ['Wrong brand', 'More than ordered', 'Bad quality', 'Expired / short date', 'Damaged', 'Wrong item', 'Other'],
     allergens: ['Gluten', 'Milk', 'Eggs', 'Nuts', 'Peanuts', 'Sesame', 'Soy', 'Fish', 'Shellfish', 'Mustard', 'Celery'],
     productionCats: ['Dips & Mezze', 'Salads', 'Sauces', 'Soups', 'Juices', 'Doughs & Bread', 'Meat & Marinades', 'Base / Prep', 'Other'],
-    itemCats: ['Meat & Poultry', 'Dairy & Cheese', 'Fruits & Vegetables', 'Vegetables & Frozen', 'Dry Goods', 'Beverages', 'Packaging & Disposables', 'Cleaning & Chemicals', 'Other'],
+    itemCats: ['Meat & Poultry', 'Dairy & Cheese', 'Fruits & Vegetables', 'Vegetables & Frozen', 'Dry Goods', 'Beverages', 'Packaging & Disposables', 'Cleaning & Chemicals', 'Bar Supplies', 'Other'],
     units: ['kg', 'g', 'L', 'ml', 'pcs', 'box', 'carton', 'pack', 'tin', 'bucket', 'bottle', 'bag', 'tray', 'drum', 'roll'],
   };
 }
@@ -282,7 +299,7 @@ function seedData() {
   S.productions.forEach(p => d.productions[p.id] = p);
   const staff = [['Angie', 'Kitchen responsible', 'Morning', true], ['Desire', 'Cook', 'Morning', true], ['MJ', 'Cook', 'Evening', true], ['Bianka', 'Cook', 'Evening', true], ['Aya', 'Cook', '', false], ['Roz', 'Cook', '', false], ['Indra', 'Baker', '', false], ['Delusha', 'Baker', '', false]];
   staff.forEach(([n, role, shift, rec], i) => { const id = 'st' + (i + 1); d.staff[id] = { id, name: n, role, site: 'Aljada', shift, pin: '', canReceive: rec, lang: 'en', active: true }; });
-  const st = [['Aljada', 'Big Chiller (central)', 'Chiller'], ['Aljada', 'Cold Station Chiller', 'Chiller'], ['Aljada', 'Hot Station Chiller', 'Chiller'], ['Aljada', 'Grill Station Chiller', 'Chiller'], ['Aljada', 'Oven Station Chiller', 'Chiller'], ['Aljada', 'Freezer', 'Freezer'], ['Aljada', 'Dry Store', 'Dry store'], ['Aljada', 'Bar Chiller', 'Chiller'], ['Cloud Kitchen', 'Chiller', 'Chiller'], ['Cloud Kitchen', 'Freezer', 'Freezer'], ['Cloud Kitchen', 'Dry Store', 'Dry store']];
+  const st = [['Aljada', 'Big Chiller (central)', 'Chiller'], ['Aljada', 'Cold Station Chiller', 'Chiller'], ['Aljada', 'Hot Station Chiller', 'Chiller'], ['Aljada', 'Grill Station Chiller', 'Chiller'], ['Aljada', 'Oven Station Chiller', 'Chiller'], ['Aljada', 'Freezer', 'Freezer'], ['Aljada', 'Dry Store', 'Dry store'], ['Cloud Kitchen', 'Chiller', 'Chiller'], ['Cloud Kitchen', 'Freezer', 'Freezer'], ['Cloud Kitchen', 'Dry Store', 'Dry store']];
   st.forEach(([site, name, type], i) => { const id = 'sp' + (i + 1); d.storages[id] = { id, site, name, type }; });
   const prep = ['Cut potatoes', 'Chop onions (white / red)', 'Chop parsley & mint', 'Wash & dry herbs / lettuce', 'Cut tomatoes & cucumber', 'Cut capsicum', 'Peel & chop garlic', 'Squeeze lemons / oranges', 'Portion & cut meat', 'Portion chicken', 'Defrost meat / chicken (in chiller)', 'Soak chickpeas / fava beans', 'Cut fruits for platter', 'Prepare pickles & olives for service', 'Fill sauce bottles / containers', 'Prepare packaging & takeaway boxes'];
   const clean = [['Clean & sanitize work surfaces', 'Every shift'], ['Clean floor', 'Every shift'], ['Clean station chillers inside', 'Daily'], ['Clean oven', 'Daily'], ['Clean grill', 'Daily'], ['Clean fryer / change oil', 'When needed'], ['Clean sinks & hand-wash station', 'Every shift'], ['Empty & clean bins', 'Every shift'], ['Clean hood & filters', 'Weekly'], ['Clean big chiller', 'Weekly'], ['Clean freezer (defrost)', 'Monthly'], ['Clean dry store shelves', 'Weekly'], ['Clean walls & tiles', 'Weekly'], ['Wash cutting boards & knives', 'Every shift'], ['Deep clean kitchen', 'Weekly']];
@@ -305,7 +322,7 @@ function resetIdle() { clearTimeout(idleTimer); if (SESSION) idleTimer = setTime
 /* ---------- i18n (kitchen screens) ---------- */
 const I18N = {
   ar: {
-    'Take item': 'أخذ صنف', 'Receive delivery': 'استلام طلبية', 'Kitchen Request': 'طلب المطبخ', 'Production': 'الإنتاج', 'Daily tasks': 'المهام اليومية', 'Waste / Charity': 'هدر / صدقة', 'Cloud Kitchen': 'المطبخ السحابي', 'Temperatures': 'درجات الحرارة', 'Stock count': 'جرد المخزون', 'Service visit': 'زيارة شركة خدمات', 'Expiry board': 'لوحة الصلاحية', 'Inspection actions': 'ملاحظات التفتيش', 'Outside grocery': 'مشتريات خارجية',
+    'Take item': 'أخذ صنف', 'Receive delivery': 'استلام طلبية', 'Kitchen Request': 'طلب المطبخ', 'Production': 'الإنتاج', 'Daily tasks': 'المهام اليومية', 'Waste / Charity': 'هدر / صدقة', 'Cloud Kitchen': 'المطبخ السحابي', 'Temperatures': 'درجات الحرارة', 'Stock count': 'جرد المخزون', 'Service visit': 'زيارة شركة خدمات', 'Expiry board': 'لوحة الصلاحية', 'Inspection actions': 'ملاحظات التفتيش', 'Machines': 'الأجهزة', 'Outside grocery': 'مشتريات خارجية',
     'Who are you?': 'من أنت؟', 'Enter your PIN': 'أدخل الرقم السري', 'Create your PIN (4 digits)': 'أنشئ رقمك السري (4 أرقام)', 'Wrong PIN': 'رقم سري خاطئ', 'Save': 'حفظ', 'Cancel': 'إلغاء', 'Search item…': 'ابحث عن صنف…', 'Quantity': 'الكمية', 'Unit': 'الوحدة', 'Reason': 'السبب', 'Photo': 'صورة', 'Done': 'تم', 'Back': 'رجوع', 'Saved': 'تم الحفظ',
     'Stock': 'المخزون', 'Enough for': 'يكفي لمدة', 'days': 'أيام', 'Out of stock': 'نفد', 'Low': 'منخفض', 'OK': 'جيد', 'Urgent items': 'أصناف عاجلة', 'Received': 'تم الاستلام', 'Not received': 'لم يصل', 'Different quantity': 'كمية مختلفة', 'Quality problem': 'مشكلة جودة', 'Return item': 'إرجاع صنف', 'Approved': 'موافقة', 'Next': 'التالي', 'Confirm': 'تأكيد', 'Add': 'إضافة', 'Delete': 'حذف', 'Edit': 'تعديل', 'Kitchen': 'المطبخ', 'Home': 'الرئيسية',
   }
@@ -548,7 +565,7 @@ function quickNewItem(name, cb, extra = {}) {
 function backBar(title, to = '#/') { return `<div class="row" style="margin-bottom:10px"><button class="btn w sm" onclick="go('${to}')">← ${t('Back')}</button><h1 class="grow" style="margin:0">${esc(title)}</h1></div>`; }
 
 route('/', (el) => {
-  const site = DEVICE.site; const ck = site !== 'Aljada';
+  const site = DEVICE.site; const ck = site === 'Cloud Kitchen';
   const readyPOs = DB.all('pos').filter(p => p.status === 'ready' && (p.site || 'Aljada') === site).length;
   const exp = activeBatches(site).filter(b => b.expiry && daysBetween(today(), b.expiry) <= 1).length;
   const myActions = openActions(site).length;
@@ -557,10 +574,10 @@ route('/', (el) => {
   const tiles = [
     ['take', '📤', 'Take item'], ['receive', '🚚', 'Receive delivery', readyPOs], ['request', '📝', 'Kitchen Request'], ['production', '🥣', 'Production'],
     ['tasks', '✅', 'Daily tasks'], ['waste', '🗑️', 'Waste / Charity'], ['ck', '🏢', 'Cloud Kitchen', ckPending + (ck ? 0 : pendingRet)], ['expiry', '⏰', 'Expiry board', exp],
-    ['temps', '🌡️', 'Temperatures'], ['count', '📋', 'Stock count'], ['visit', '🧰', 'Service visit'], ['actions', '⚠️', 'Inspection actions', myActions], ['outside', '🛒', 'Outside grocery'],
-  ];
+    ['temps', '🌡️', 'Temperatures'], ['count', '📋', 'Stock count'], ['visit', '🧰', 'Service visit'], ['machines', '☕', 'Machines'], ['actions', '⚠️', 'Inspection actions', myActions], ['outside', '🛒', 'Outside grocery'],
+  ].filter(x => !(site === 'Bar' && x[0] === 'ck'));
   const urgent = urgentItems(site).slice(0, 6);
-  el.innerHTML = `<h1>${t('Kitchen')} · ${esc(site)}</h1>
+  el.innerHTML = `<h1>${site === 'Bar' ? '☕ Bar' : t('Kitchen') + ' · ' + esc(site)}</h1>
   ${urgent.length ? `<div class="alert red">🔴 <div><b>${t('Urgent items')}:</b> ${urgent.map(u => esc(u.item.name) + ' (' + qf(u.st.stock) + ' ' + esc(u.item.unit) + ')').join(' · ')}</div></div>` : ''}
   <div class="tiles">${tiles.map(([k, ic, tt, bd]) => `<div class="tile" onclick="go('#/${k}')">${bd ? `<span class="bd">${bd}</span>` : ''}<div class="ic">${ic}</div><div class="tt">${t(tt)}</div></div>`).join('')}</div>
   <p class="small muted" style="margin-top:20px">Version ${APP_VERSION} · ${esc(site)} tablet · tap 🔐 for Admin / Inspection</p>`;
@@ -827,7 +844,8 @@ route('/waste', (el) => {
 
 /* ---------- CLOUD KITCHEN ---------- */
 route('/ck', (el) => {
-  const isCK = DEVICE.site !== 'Aljada';
+  if (DEVICE.site === 'Bar') { el.innerHTML = backBar(t('Cloud Kitchen')) + '<div class="alert bl">The cloud kitchen works with the Aljada kitchen tablet.</div>'; return; }
+  const isCK = DEVICE.site === 'Cloud Kitchen';
   const reqs = DB.all('ckreq').sort((a, b) => b._ts - a._ts);
   const rets = DB.all('ckret').sort((a, b) => b._ts - a._ts);
   el.innerHTML = backBar(t('Cloud Kitchen')) + (isCK ? `
@@ -993,6 +1011,25 @@ route('/outside', (el) => {
   draw();
 });
 
+/* ---------- MACHINES (equipment problems) ---------- */
+route('/machines', (el) => {
+  const eq = DB.all('equipment').filter(x => x.active !== false && x.site === DEVICE.site).sort((a, b) => a.name.localeCompare(b.name));
+  el.innerHTML = backBar(t('Machines')) + `<p class="muted small">Tap a machine to report a problem or record cleaning / repair.</p><div class="list">${eq.map(x => { const last = DB.all('eqlogs').filter(l => l.eqId === x.id).sort((a, b) => b.ts - a.ts)[0]; const open = DB.all('eqlogs').some(l => l.eqId === x.id && l.kind === 'problem' && !l.fixed); return `<div class="li" onclick="machineLog('${x.id}')"><div class="grow"><div class="nm">${esc(x.name)}</div><div class="sub">${esc(x.type || '')}${last ? ' · last: ' + esc(last.kind) + ' ' + fmtD(last.date) + ' by ' + esc(last.by) : ''}</div></div>${open ? '<span class="chip red">problem</span>' : '<span class="chip ok">OK</span>'}<span>›</span></div>`; }).join('') || '<div class="li muted">No machines for this site – the admin adds them in Admin → Machines.</div>'}</div>`;
+});
+function machineLog(id) {
+  const x = DB.get('equipment', id); let kind = 'problem', photo = '';
+  const open = DB.all('eqlogs').filter(l => l.eqId === id && l.kind === 'problem' && !l.fixed);
+  const b = modal(x.name, `${open.map(l => `<div class="alert red">⚠️ ${fmtD(l.date)} – ${esc(l.note)} (${esc(l.by)}) <button class="btn g sm" data-fx="${l.id}" style="margin-left:auto">✓ Fixed</button></div>`).join('')}
+  <div class="seg" id="mk"><button class="on red" data-k="problem">⚠️ Problem / broken</button><button data-k="cleaned">🧽 Cleaned</button><button data-k="repaired">🔧 Repaired / serviced</button></div>
+  <label class="f">Details</label><textarea class="i" id="mn" placeholder="What happened / what was done"></textarea>
+  <div class="row" style="margin-top:8px"><button class="btn w sm" id="mp">📷 ${t('Photo')}</button><span id="mph"></span></div>
+  <div style="margin-top:12px"><button class="btn big" id="ok">${t('Save')}</button></div>`);
+  $$('#mk button', b).forEach(y => y.onclick = () => { $$('#mk button', b).forEach(z => z.className = ''); y.className = 'on ' + (y.dataset.k === 'problem' ? 'red' : 'ok'); kind = y.dataset.k; });
+  $('#mp', b).onclick = () => pickPhoto(p => { photo = p; $('#mph', b).innerHTML = photoHtml(p); });
+  $$('[data-fx]', b).forEach(y => y.onclick = () => whoAreYou(st => { const l = DB.get('eqlogs', y.dataset.fx); l.fixed = true; l.fixedBy = st.name; l.fixedAt = Date.now(); DB.put('eqlogs', l, 'machine fixed'); toast('✓'); render(); }));
+  $('#ok', b).onclick = () => { if (kind === 'problem' && !$('#mn', b).value.trim()) return toast('Describe the problem'); whoAreYou(st => { DB.put('eqlogs', { eqId: id, name: x.name, site: x.site, date: today(), ts: Date.now(), kind, note: $('#mn', b).value, photo, by: st.name, fixed: kind !== 'problem' }); toast('✓ Saved'); render(); }); };
+}
+
 /* ================= INSPECTION (Melissa) ================= */
 const CHECKLIST = [
   ['Food storage & labelling', ['All products covered / properly packed', 'Every container labelled (name, prep date, expiry)', 'Raw food stored below cooked / ready-to-eat', 'No food on the floor (shelves 15 cm above floor)', 'Containers food-grade and clean', 'Dry store clean, tidy, no open bags']],
@@ -1002,7 +1039,7 @@ const CHECKLIST = [
   ['Staff hygiene', ['Clean uniforms and aprons', 'Hair nets / caps worn', 'Gloves used for ready-to-eat food', 'Short clean nails, no jewellery', 'Hand-wash station ready (soap, paper towels)', 'Staff washing hands correctly', 'No sick staff working', 'Valid health cards / food safety training']],
   ['Pest control & waste', ['No signs of pests (insects, droppings)', 'Doors / screens closed', 'Bins covered, emptied, clean', 'Pest control visit up to date (report available)', 'Grease trap cleaned on schedule']],
   ['Equipment & documents', ['Thermometers and scales working', 'Equipment in good condition (no broken parts)', 'Person in Charge (PIC) present on the shift', 'Supplier invoices / delivery notes kept', 'Cleaning schedule and temperature records available']],
-  ['Bar', ['Bar clean and dry', 'All bar products labelled and dated', 'Fruits / juices fresh and covered', 'Ice machine clean', 'Bar chiller temperature OK']],
+  ['Bar', ['Bar counter clean and dry', 'All bar products labelled and dated (opening date too)', 'Fruits / juices / cakes fresh and covered', 'Cake display chiller clean and at temperature', 'Beverage & food chillers clean, organised, at temperature', 'Coffee machine clean (group heads, steam wand, drip tray)', 'Tea machine clean', 'Dishwashing machine clean, filters OK, rinse temperature OK', 'Bar store tidy (cups, lids, straws covered, off the floor)', 'Milk and dairy in date and refrigerated']],
   ['FOH', ['Glass surfaces wiped regularly', 'Carts and cabinets clean (at least 3× a week)', 'Tables, chairs and menus clean', 'Outside surfaces / entrance clean', 'Washrooms clean and stocked']],
 ];
 const ITEM_STATUS = [['ok', '✅ OK', 'ok'], ['use', '⚠️ Use first', 'or'], ['expired', '❌ Expired / throw away', 'red'], ['opened', '📦 Opened when it shouldn\'t be', 'or'], ['fifo', '🔁 FIFO not respected', 'or'], ['nolabel', '🏷️ No label / no date', 'or'], ['storage', '🧊 Badly stored', 'or']];
@@ -1013,18 +1050,19 @@ route('/insp', (el, parts) => {
   if (parts[0] === 'view') return viewInspection(el, parts[1]);
   const pend = DB.all('prodlogs').filter(l => !l.approval).sort((a, b) => b.ts - a.ts);
   const ins = DB.all('inspections').sort((a, b) => b._ts - a._ts);
-  el.innerHTML = `<h1>🔍 Manager Inspection</h1><div class="tiles"><div class="tile" onclick="go('#/insp/new')"><div class="ic">📝</div><div class="tt">New inspection · ${esc(DEVICE.site)}</div></div>
+  el.innerHTML = `<h1>🔍 Manager Inspection</h1><div class="tiles"><div class="tile" onclick="go('#/insp/new')"><div class="ic">📝</div><div class="tt">New inspection</div></div>
   <div class="tile" onclick="approvalsList()"><div class="ic">🥣</div><div class="tt">Production approval</div>${pend.length ? `<span class="bd">${pend.length}</span>` : ''}</div>
   <div class="tile" onclick="go('#/actions')"><div class="ic">⚠️</div><div class="tt">Open actions</div>${openActions().length ? `<span class="bd">${openActions().length}</span>` : ''}</div></div>
   <h2>Reports</h2><div class="list">${ins.map(i => `<div class="li" onclick="go('#/insp/view/${i.id}')"><div class="grow"><div class="nm">${fmtD(i.date)} · ${esc(i.site)} · Grade ${esc(i.grade)} (${i.score}%)</div><div class="sub">${esc(i.by)} · ${(i.actions || []).filter(a => !a.done).length} open actions</div></div><span>›</span></div>`).join('') || '<div class="li muted">No inspection yet.</div>'}</div>`;
 });
-function newInspection(el) {
-  const site = DEVICE.site; const draft = { date: today(), site, by: SESSION.name, items: {}, checks: {}, actions: [], extraNotes: { Kitchen: '', Bar: '', FOH: '' } };
+function newInspection(el, siteArg) {
+  const site = siteArg ? decodeURIComponent(siteArg) : DEVICE.site; const draft = { date: today(), site, by: SESSION.name, items: {}, checks: {}, actions: [], extraNotes: { Kitchen: '', Bar: '', FOH: '' } };
   let tab = 'items';
   const batches = activeBatches(site);
   const draw = () => {
     el.innerHTML = `<div class="row"><button class="btn w sm" onclick="go('#/insp')">← Back</button><h1 class="grow" style="margin:0">Inspection · ${esc(site)} · ${fmtD(draft.date)}</h1></div>
-    <div class="tabs" style="margin-top:10px">${[['items', '1. Items & expiry'], ['checks', '2. Checklist'], ['notes', '3. Notes'], ['finish', '4. Finish']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-t="${k}">${l}</button>`).join('')}</div><div id="ib"></div>`;
+    <div class="seg" style="margin-top:8px">${DB.settings().sites.map(x => `<button class="${x === site ? 'on' : ''}" onclick="go('#/insp/new/${encodeURIComponent(x)}')">${esc(x)}</button>`).join('')}</div>
+    <div class="tabs" style="margin-top:10px">${[['items', '1. Items & expiry'], ['checks', '2. Checklist'], ['machines', '3. Machines'], ['notes', '4. Notes'], ['finish', '5. Finish']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-t="${k}">${l}</button>`).join('')}</div><div id="ib"></div>`;
     $$('[data-t]').forEach(b => b.onclick = () => { tab = b.dataset.t; draw(); });
     const ib = $('#ib');
     if (tab === 'items') {
@@ -1048,6 +1086,13 @@ function newInspection(el) {
       $$('[data-cp]').forEach(x => x.onclick = () => pickPhoto(p => { draft.checks[x.dataset.cp].photo = p; draw(); }));
       $$('[data-all]').forEach(x => x.onclick = () => { const si = +x.dataset.all; CHECKLIST[si][1].forEach((p, pi) => { const k = si + '.' + pi; if (!draft.checks[k]) draft.checks[k] = { st: 'ok' }; }); draw(); });
     }
+    if (tab === 'machines') {
+      const eq = DB.all('equipment').filter(x => x.active !== false && x.site === site); draft.equip = draft.equip || {};
+      ib.innerHTML = eq.map(x => { const r = draft.equip[x.id] || {}; const open = DB.all('eqlogs').filter(l => l.eqId === x.id && l.kind === 'problem' && !l.fixed); return `<div class="card"><b>${esc(x.name)}</b>${open.length ? ` <span class="chip red">${open.length} open problem</span>` : ''}<div class="seg" style="margin-top:6px"><button class="${r.st === 'ok' ? 'on ok' : ''}" data-e="${x.id}" data-s="ok">✅ Clean & working</button><button class="${r.st === 'dirty' ? 'on or' : ''}" data-e="${x.id}" data-s="dirty">🧽 Needs cleaning</button><button class="${r.st === 'broken' ? 'on red' : ''}" data-e="${x.id}" data-s="broken">🔧 Not working / repair</button></div>${r.st && r.st !== 'ok' ? `<div class="row" style="margin-top:6px"><input class="i grow" data-en="${x.id}" placeholder="Note" value="${esc(r.note || '')}"><button class="btn w sm" data-ep="${x.id}">📷</button>${photoHtml(r.photo)}</div>` : ''}</div>`; }).join('') || '<div class="alert bl">No machines for this site (Admin → Machines).</div>';
+      $$('[data-e]').forEach(x => x.onclick = () => { draft.equip[x.dataset.e] = Object.assign(draft.equip[x.dataset.e] || {}, { st: x.dataset.s }); draw(); });
+      $$('[data-en]').forEach(x => x.onchange = () => draft.equip[x.dataset.en].note = x.value);
+      $$('[data-ep]').forEach(x => x.onclick = () => pickPhoto(p => { draft.equip[x.dataset.ep].photo = p; draw(); }));
+    }
     if (tab === 'notes') {
       ib.innerHTML = `${['Kitchen', 'Bar', 'FOH'].map(a => `<label class="f">${a} – general notes</label><textarea class="i" data-a="${a}">${esc(draft.extraNotes[a])}</textarea>`).join('')}<p class="small muted">These notes are added to the report as they are.</p>`;
       $$('[data-a]').forEach(x => x.onchange = () => draft.extraNotes[x.dataset.a] = x.value);
@@ -1064,7 +1109,9 @@ function newInspection(el) {
         // expired items → waste
         Object.entries(draft.items).forEach(([bid, r]) => { if (r.st === 'expired') { const b = DB.get('batches', bid); if (b) { b.status = 'discarded'; DB.put('batches', b, false); addMove({ site: b.site, ref: b.ref, kind: 'waste', qty: b.qty, unit: b.unit || refUnit(b.ref), reason: 'Expired (inspection)', staff: SESSION.name, photo: r.photo }); } } if (r.st === 'use') { const b = DB.get('batches', bid); if (b) { b.useFirst = true; DB.put('batches', b, false); } } });
         const itemsArr = Object.entries(draft.items).map(([bid, r]) => { const b = batches.find(x => x.id === bid); return Object.assign({ bid, name: b ? refName(b.ref) : '?', expiry: b && b.expiry }, r); });
-        const rec = DB.put('inspections', { date: draft.date, site, by: SESSION.name, items: itemsArr, checks: draft.checks, notes: draft.extraNotes, actions: draft.actions, score: sc2.score, grade: sc2.grade, crit: sc2.crit });
+        Object.entries(draft.equip || {}).forEach(([eid, r]) => { if (r.st === 'broken') { const x = DB.get('equipment', eid); if (x) DB.put('eqlogs', { eqId: eid, name: x.name, site: x.site, date: today(), ts: Date.now(), kind: 'problem', note: r.note || 'Not working (inspection)', photo: r.photo || '', by: SESSION.name, fixed: false }); } });
+        const equipArr = Object.entries(draft.equip || {}).map(([eid, r]) => Object.assign({ eid, name: (DB.get('equipment', eid) || {}).name || '?' }, r));
+        const rec = DB.put('inspections', { date: draft.date, site, by: SESSION.name, items: itemsArr, equip: equipArr, checks: draft.checks, notes: draft.extraNotes, actions: draft.actions, score: sc2.score, grade: sc2.grade, crit: sc2.crit });
         toast('✓ Inspection saved'); go('#/insp/view/' + rec.id);
       };
     }
@@ -1075,12 +1122,14 @@ function buildActions(draft, batches) {
   const keep = {}; draft.actions.forEach(a => keep[a.key] = a);
   const acts = [];
   Object.entries(draft.items).forEach(([bid, r]) => { if (r.st && r.st !== 'ok') { const b = batches.find(x => x.id === bid); const lbl = ITEM_STATUS.find(x => x[0] === r.st)[1].replace(/^\S+\s/, ''); const key = 'i' + bid; acts.push(keep[key] || { key, text: `${b ? refName(b.ref) : ''}: ${lbl}${r.note ? ' – ' + r.note : ''}`, who: '', due: r.st === 'expired' ? 'Now' : 'Today', photo: r.photo || '', sev: r.st === 'expired' ? 'crit' : 'warn' }); } });
+  Object.entries(draft.equip || {}).forEach(([eid, r]) => { if (r.st && r.st !== 'ok') { const x = DB.get('equipment', eid); const key = 'e' + eid; acts.push(keep[key] || { key, text: `${x ? x.name : 'Machine'}: ${r.st === 'broken' ? 'not working – call for repair' : 'needs cleaning'}${r.note ? ' – ' + r.note : ''}`, who: x && x.site === 'Bar' ? 'Bar team' : '', due: r.st === 'broken' ? 'Now' : 'Today', photo: r.photo || '', sev: r.st === 'broken' ? 'crit' : 'warn' }); } });
   Object.entries(draft.checks).forEach(([k, r]) => { if (r.st === 'warn' || r.st === 'crit') { const [si, pi] = k.split('.').map(Number); const key = 'c' + k; const area = CHECKLIST[si][0]; acts.push(keep[key] || { key, text: `${area}: ${r.note || CHECKLIST[si][1][pi]}`, who: area === 'Bar' ? 'Bar team' : area === 'FOH' ? 'FOH team' : '', due: r.st === 'crit' ? 'Now' : 'Today', photo: r.photo || '', sev: r.st }); } });
   draft.actions = acts;
 }
 function scoreInspection(d) {
   let tot = 0, pts = 0, crit = 0;
   Object.values(d.checks).forEach(r => { if (r.st === 'na' || !r.st) return; tot += 2; if (r.st === 'ok') pts += 2; if (r.st === 'warn') pts += 1; if (r.st === 'crit') crit++; });
+  Object.values(d.equip || {}).forEach(r => { if (!r.st) return; tot += 2; if (r.st === 'ok') pts += 2; if (r.st === 'dirty') pts += 1; if (r.st === 'broken') crit++; });
   Object.values(d.items).forEach(r => { if (!r.st) return; tot += 1; if (r.st === 'ok' || r.st === 'use') pts += 1; if (r.st === 'expired') crit++; });
   let score = tot ? Math.round(pts / tot * 100) : 100; score = Math.max(0, score - crit * 5);
   const grade = score >= 95 ? 'A+' : score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F';
@@ -1097,6 +1146,7 @@ function inspectionText(ins) {
   const temps = DB.all('temps').filter(x => x.date === ins.date && x.site === ins.site);
   if (temps.length) L.push('Temperatures: ' + temps.map(x => `${x.name} ${x.temp}°C${x.alert ? ' ❌' : ''}`).join(' · '));
   L.push('');
+  const eqs = (ins.equip || []).filter(e => e.st); if (eqs.length) { L.push(`MACHINES ${eqs.some(e => e.st === 'broken') ? '❌' : eqs.some(e => e.st === 'dirty') ? '⚠️' : '✅'}`); eqs.forEach(e => L.push(`• ${e.st === 'ok' ? '✅' : e.st === 'dirty' ? '⚠️' : '❌'} ${e.name}${e.st === 'dirty' ? ': needs cleaning' : e.st === 'broken' ? ': not working' : ''}${e.note ? ' – ' + e.note : ''}`)); L.push(''); }
   CHECKLIST.forEach(([s]) => { const v = sec[s]; if (!v.ok && !v.warn.length && !v.crit.length) return; L.push(`${s.toUpperCase()} ${v.crit.length ? '❌' : v.warn.length ? '⚠️' : '✅'}`); v.crit.forEach(x => L.push('• ❌ ' + x)); v.warn.forEach(x => L.push('• ⚠️ ' + x)); if (!v.crit.length && !v.warn.length) L.push('• All good'); L.push(''); });
   Object.entries(ins.notes || {}).forEach(([a, n]) => { if (n && n.trim()) { L.push(a.toUpperCase() + ' – NOTES'); L.push(n.trim()); L.push(''); } });
   const open = (ins.actions || []).filter(a => !a.done);
@@ -1415,7 +1465,7 @@ async function askAI(q) {
 }
 
 /* ================= ADMIN ================= */
-const ADMIN_NAV = [['dash', '📊 Dashboard'], ['orders', '🧾 Orders & POs'], ['invoices', '💰 Invoices & prices'], ['items', '📦 Items'], ['suppliers', '🏪 Suppliers'], ['productions', '🥣 Productions'], ['stock', '📈 Stock'], ['waste', '🗑️ Waste & Missing'], ['ck', '🏢 Cloud Kitchen'], ['tasks', '✅ Tasks'], ['inspections', '🔍 Inspections'], ['temps', '🌡️ Temperatures'], ['services', '🧰 Services'], ['staff', '👥 Staff'], ['storages', '🧊 Storage places'], ['reports', '📑 Reports'], ['settings', '⚙️ Settings'], ['history', '🕘 History']];
+const ADMIN_NAV = [['dash', '📊 Dashboard'], ['orders', '🧾 Orders & POs'], ['invoices', '💰 Invoices & prices'], ['items', '📦 Items'], ['suppliers', '🏪 Suppliers'], ['productions', '🥣 Productions'], ['stock', '📈 Stock'], ['waste', '🗑️ Waste & Missing'], ['ck', '🏢 Cloud Kitchen'], ['tasks', '✅ Tasks'], ['inspections', '🔍 Inspections'], ['temps', '🌡️ Temperatures'], ['services', '🧰 Services'], ['staff', '👥 Staff'], ['storages', '🧊 Storage places'], ['machines', '☕ Machines'], ['reports', '📑 Reports'], ['settings', '⚙️ Settings'], ['history', '🕘 History']];
 route('/admin', (el, parts, params) => {
   if (!SESSION || SESSION.role !== 'admin') { el.innerHTML = '<p class="muted">Admin login required.</p>'; pwLogin('admin'); return; }
   const sec = parts[0] || 'dash';
@@ -1489,6 +1539,7 @@ ADMIN.dash = el => {
   ${reqs.map(r => `<div class="alert bl">📝 Kitchen Request from <b>${esc(r.by)}</b> – ${esc(supName(r.supplierId))} (${r.lines.length} items) <button class="btn sm" style="margin-left:auto" onclick="go('#/admin/orders/convert/${r.id}')">Convert to PO</button></div>`).join('')}
   ${recvDiff.map(p => `<div class="alert red">🚚 <div class="grow"><b>${esc(supName(p.supplierId))}</b> delivered ${fmtDT(p.recvAt)} with ${p.diffCount} difference(s):<br>${(p.diffs || []).filter(d => d.c !== 'ok').map(d => d.t).join('<br>')}</div><button class="btn w sm" onclick="markSeen('pos','${p.id}')">Seen</button></div>`).join('')}
   ${pa.slice(0, 6).map(a => `<div class="alert or">💰 <b>${esc(a.supplier)}</b> ${a.pct > 0 ? 'raised' : 'lowered'} <b>${esc(a.item)}</b> from ${a.old} to ${a.new} AED (${a.pct > 0 ? '+' : ''}${a.pct}%) <a href="#/admin/invoices/prices" style="margin-left:auto">check</a></div>`).join('')}
+  ${DB.all('eqlogs').filter(l => l.kind === 'problem' && !l.fixed).map(l => `<div class="alert red">🔧 ${esc(l.site)} – <b>${esc(l.name)}</b>: ${esc(l.note)} (${esc(l.by)}, ${fmtD(l.date)})</div>`).join('')}
   ${tAl.map(x => `<div class="alert red">🌡️ ${esc(x.site)} – ${esc(x.name)} at <b>${x.temp}°C</b> (${esc(x.by)}, ${fmtT(x.ts)})</div>`).join('')}
   ${late.map(x => `<div class="alert or">🧰 ${esc(x.name)} visit is late (last ${fmtD(lastVisit(x.id).date)})</div>`).join('')}
   ${ck.map(r => `<div class="alert or">🏢 Cloud kitchen difference ${fmtD(r.date)}: ${r.diffs.map(esc).join(' · ')} <button class="btn w sm" onclick="markSeen('${r.recvLines && r.confirmedBy ? 'ckret' : 'ckreq'}','${r.id}')">Seen</button></div>`).join('')}
@@ -1772,6 +1823,14 @@ ADMIN.staff = el => crudList(el, {
 });
 function resetPin(id) { const s = DB.get('staff', id); s.pin = ''; DB.put('staff', s, 'PIN reset'); toast('PIN reset – they create a new one next time'); render(); }
 ADMIN.storages = el => crudList(el, { title: 'Storage places', col: 'storages', fields: [{ k: 'name', label: 'Name', req: true }, { k: 'site', label: 'Site', type: 'select', options: siteOpts }, { k: 'type', label: 'Type', type: 'select', options: () => ['Chiller', 'Freezer', 'Dry store', 'Other'] }], cols: [['Name', x => `<b>${esc(x.name)}</b>`], ['Site', x => esc(x.site)], ['Type', x => esc(x.type)]], sort: (a, b) => a.site.localeCompare(b.site) || a.name.localeCompare(b.name), newDefaults: { site: 'Aljada', type: 'Chiller' } });
+
+ADMIN.machines = el => crudList(el, {
+  title: 'Machines & equipment', col: 'equipment',
+  fields: [{ k: 'name', label: 'Name', req: true }, { k: 'site', label: 'Site', type: 'select', options: siteOpts }, { k: 'type', label: 'Type (coffee, tea, dishwasher, refrigerator…)' }, { k: 'brand', label: 'Brand / model' }, { k: 'supplier', label: 'Service company / phone' }, { k: 'notes', label: 'Notes', type: 'textarea' }, { k: 'active', label: 'Active', type: 'bool', def: true }],
+  cols: [['Machine', x => `<b>${esc(x.name)}</b>`], ['Site', x => esc(x.site)], ['Type', x => esc(x.type || '')], ['Status', x => { const o = DB.all('eqlogs').filter(l => l.eqId === x.id && l.kind === 'problem' && !l.fixed); return o.length ? `<span class="chip red">⚠️ ${esc(o[0].note)}</span>` : '<span class="chip ok">OK</span>'; }], ['Last log', x => { const l = DB.all('eqlogs').filter(y => y.eqId === x.id).sort((a, b) => b.ts - a.ts)[0]; return l ? `${esc(l.kind)} ${fmtD(l.date)} · ${esc(l.by)}` : ''; }]],
+  sort: (a, b) => a.site.localeCompare(b.site) || a.name.localeCompare(b.name), newDefaults: { site: 'Bar', active: true },
+  sub: '<p class="small muted">The kitchen / bar report problems, cleaning and repairs with ☕ Machines. Melissa checks them in the inspection.</p>'
+});
 
 /* ---------- REPORTS ---------- */
 ADMIN.reports = el => {
