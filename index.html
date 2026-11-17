@@ -249,7 +249,9 @@ async function startRemote() {
   try {
     await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
     await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js');
+    await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js');
     const app = firebase.initializeApp(cfg); const fs = firebase.firestore(app);
+    try { await firebase.auth(app).signInAnonymously(); } catch (e) { console.warn('anon auth', e); }
     try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => { }); } catch (e) { }
     DB.remote = {
       write(col, obj) { fs.collection('inv_' + col).doc(obj.id).set(JSON.parse(JSON.stringify(obj))).catch(e => { console.warn(e); setSync('⚠️ Sync error'); }); }
