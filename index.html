@@ -1361,6 +1361,7 @@ function dailySummaryText(d) {
   const ins = DB.all('inspections').filter(i => i.date === d); ins.forEach(i => L.push(`INSPECTION ${i.site}: grade ${i.grade} (${i.score}%), ${(i.actions || []).filter(a => !a.done).length} open actions`));
   const tb = DB.all('temps').filter(x => x.date === d && x.alert); if (tb.length) { L.push(''); L.push('TEMPERATURE ALERTS'); tb.forEach(x => L.push(`• ${x.site} ${x.name}: ${x.temp}°C (${x.by})`)); }
   const urg = urgentItems('Aljada'); if (urg.length) { L.push(''); L.push('URGENT ITEMS (Aljada)'); urg.slice(0, 20).forEach(u => L.push(`• ${u.item.name}: ${qf(u.st.stock)} ${u.item.unit}`)); }
+  if (L.filter(x => x.trim()).length <= 1) L.push('Nothing has been recorded yet today.');
   return L.join('\n');
 }
 async function exportExcel(from, to) {
@@ -1407,19 +1408,31 @@ function voicePanel(greet) {
   const b = modal('🎤 ' + (VOICE.user || s.ownerName || 'Lydia') + '\'s assistant', `<div class="voice-orb" id="orb">🎤</div>
   ${ai ? `<div class="seg" style="justify-content:center"><button class="${!VOICE.deep ? 'on' : ''}" id="vq">⚡ Quick (Haiku)</button><button class="${VOICE.deep ? 'on' : ''}" id="vd">🧠 Deep analysis (Sonnet)</button></div>` : '<p class="small muted" style="text-align:center">Level 1 voice (built-in answers). Level 2 conversation can be switched on in Settings.</p>'}
   <div class="chat" id="chat"></div><div class="row"><input class="i grow" id="vt" placeholder="Or type your question…"><button class="btn" id="vs">➤</button></div>
-  <div class="row" style="margin-top:8px"><select class="i" id="vl" style="width:auto"><option value="en-US">English</option><option value="fr-FR">Français</option><option value="ar-AE">العربية</option></select><span class="small muted">Tap the microphone and speak.</span></div>`, { onOpen: () => { } });
+  <div class="row" style="margin-top:8px"><select class="i" id="vl" style="width:auto"><option value="en-US">English</option><option value="fr-FR">Français</option><option value="ar-AE">العربية</option></select><span class="small muted">Tap the big microphone and speak – or tap the 🎤 key on the keyboard. Tap 🔊 to hear an answer again. Check the iPad volume.</span></div>`, { onOpen: () => { } });
   $('#vl', b).value = DEVICE.voiceLang || 'en-US'; $('#vl', b).onchange = e => { DEVICE.voiceLang = e.target.value; saveDevice(); };
   VOICE.hist.forEach(m => addChat(m.r, m.t, true));
   if (ai) { $('#vq', b).onclick = () => { VOICE.deep = false; voicePanel(false); }; $('#vd', b).onclick = () => { VOICE.deep = true; voicePanel(false); }; }
   $('#orb', b).onclick = listen; $('#vs', b).onclick = () => { const q = $('#vt', b).value.trim(); if (q) { $('#vt', b).value = ''; ask(q); } }; $('#vt', b).onkeydown = e => { if (e.key === 'Enter') $('#vs', b).click(); };
   if (greet) { const g = greeting(); addChat('a', g); speak(g); }
 }
-function addChat(r, txt, noStore) { const c = $('#chat'); if (!c) return; const d = document.createElement('div'); d.className = 'm ' + r; d.textContent = txt; c.appendChild(d); c.scrollTop = 1e6; if (!noStore) VOICE.hist.push({ r, t: txt }); }
-function speak(txt) { try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(txt.replace(/[•→✓🔴🟠🟢⚠️❌✅]/g, '')); u.lang = DEVICE.voiceLang || 'en-US'; u.rate = 1; speechSynthesis.speak(u); } catch (e) { } }
+function addChat(r, txt, noStore) { const c = $('#chat'); if (!c) return; const d = document.createElement('div'); d.className = 'm ' + r; d.textContent = txt; if (r === 'a') { const b = document.createElement('button'); b.textContent = '🔊'; b.className = 'btn w sm'; b.style.marginLeft = '6px'; b.onclick = () => speak(txt); d.appendChild(b); } c.appendChild(d); c.scrollTop = 1e6; if (!noStore) VOICE.hist.push({ r, t: txt }); }
+let _voices = [];
+try { const lv = () => { _voices = speechSynthesis.getVoices(); }; lv(); speechSynthesis.onvoiceschanged = lv; } catch (e) { }
+function speak(txt) {
+  try {
+    if (!window.speechSynthesis) return;
+    if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(String(txt).replace(/[•→✓🔴🟠🟢⚠️❌✅🔧🧽☕👍]/g, '').replace(/\n+/g, '. '));
+    const lang = DEVICE.voiceLang || 'en-US'; u.lang = lang; u.rate = 1; u.volume = 1;
+    const v = (_voices.length ? _voices : speechSynthesis.getVoices()).find(x => x.lang && x.lang.replace('_', '-').toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch (e) { }
+}
 function listen() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return toast('Voice recognition not supported here – type your question');
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) { const t = $('#vt'); if (t) t.focus(); return toast('On this iPad: tap the 🎤 key on the keyboard and speak – then press ➤', 5000); }
   const r = new SR(); r.lang = DEVICE.voiceLang || 'en-US'; r.interimResults = false; r.maxAlternatives = 1; $('#orb').classList.add('listen');
-  r.onresult = e => { const q = e.results[0][0].transcript; ask(q); }; r.onend = () => { const o = $('#orb'); if (o) o.classList.remove('listen'); }; r.onerror = () => toast('I did not hear – try again'); r.start();
+  r.onresult = e => { const q = e.results[0][0].transcript; ask(q); }; r.onend = () => { const o = $('#orb'); if (o) o.classList.remove('listen'); }; r.onerror = (ev) => { if (ev && ev.error === 'not-allowed') { const t = $('#vt'); if (t) t.focus(); toast('Microphone blocked here – use the 🎤 key on the keyboard and press ➤', 5000); } else toast('I did not hear – try again'); }; try { r.start(); } catch (err) { toast('Use the 🎤 key on the keyboard'); }
 }
 function greeting() {
   const s = DB.settings(); const lydia = s.ownerName || 'Lydia'; const boss = s.bossName || 'Mr. Ahmed'; const isBoss = VOICE.user === boss;
@@ -1440,26 +1453,46 @@ function findRef(q) {
   return best;
 }
 function localAnswer(q) {
-  const n = norm(q); const has = (...w) => w.some(x => n.includes(x)); const site = DEVICE.site;
-  const boss = DB.settings().bossName || 'Mr. Ahmed';
-  if (VOICE.user !== boss && has('ahmed') && has('fine', 'good', 'ok', 'well', 'bien', 'here', 'there', 'yes', 'hamdulillah', 'hamdoulah')) return `Great, I'm happy to hear that ${boss} is well! Please send him my greetings. What can I do for you?`;
-  if (has('hello', 'hi ', 'bonjour', 'salam', 'hey', 'how are', 'ca va', 'everything')) return greeting();
-  if (has('urgent', 'out of stock', 'running low', 'manque', 'urgence', 'low stock')) { const u = urgentItems(site); return u.length ? `${u.length} urgent items: ` + u.slice(0, 12).map(x => `${x.item.name} (${qf(x.st.stock)} ${x.item.unit})`).join(', ') + '.' : 'No urgent items right now. 👍'; }
-  if (has('expir', 'perim', 'date')) { const bs = activeBatches().filter(b => b.expiry && daysBetween(today(), b.expiry) <= 1); return bs.length ? 'Expiring today or tomorrow: ' + bs.map(b => `${refName(b.ref)} (${b.site})`).join(', ') + '.' : 'Nothing expires today or tomorrow.'; }
-  if (has('waste', 'gaspill', 'thrown')) { const w = movesIn(today(), today()).filter(m => m.kind === 'waste'); return w.length ? `Today's waste: ${w.length} entries, ${aed(w.reduce((a, m) => a + num(m.cost), 0))}. ` + w.slice(0, 8).map(m => `${refName(m.ref)} ${qf(m.qty)} ${m.unit} (${m.reason})`).join(', ') + '.' : 'No waste recorded today.'; }
-  if (has('missing', 'manquant')) { const m = movesIn(addDays(today(), -30), today()).filter(x => x.kind === 'adj' && num(x.qty) < 0 && !x.start); return m.length ? 'Missing in the last 30 days: ' + m.slice(0, 10).map(x => `${refName(x.ref)} ${qf(-x.qty)} ${x.unit}`).join(', ') + '.' : 'Nothing missing at the last counts.'; }
-  if (has('deliver', 'pending', 'supplier', 'livraison', 'order')) { const p = DB.all('pos').filter(x => x.status === 'ready'); return p.length ? `${p.length} deliveries waiting: ` + p.map(x => supName(x.supplierId)).join(', ') + '.' : 'No delivery waiting.'; }
-  if (has('inspection', 'grade')) { const i = DB.all('inspections').sort((a, b) => b._ts - a._ts)[0]; return i ? `Last inspection ${fmtD(i.date)} at ${i.site}: grade ${i.grade}, ${i.score}%, ${(i.actions || []).filter(a => !a.done).length} open actions.` : 'No inspection yet.'; }
-  if (has('price', 'prix', 'increase')) { const a = DB.all('pricealerts').filter(x => x.status === 'open'); return a.length ? `${a.length} price changes to check: ` + a.slice(0, 8).map(x => `${x.supplier} ${x.item} ${x.old}→${x.new}`).join(', ') + '.' : 'No new price changes.'; }
-  if (has('temperature', 'chiller', 'fridge')) { const tp = DB.all('temps').filter(x => x.date === today()); const bad = tp.filter(x => x.alert); return tp.length ? `${tp.length} temperatures recorded today. ` + (bad.length ? 'Alerts: ' + bad.map(x => `${x.name} ${x.temp}°C`).join(', ') : 'All OK.') : 'No temperatures recorded today yet.'; }
-  if (has('production', 'made today')) { const pl = DB.all('prodlogs').filter(l => l.date === today()); return pl.length ? 'Today: ' + pl.map(l => `${prodName(l.prodId)} ${qf(l.qty)} ${l.unit} by ${l.resp}`).join(', ') + '.' : 'No production recorded today.'; }
-  if (has('food cost', 'spend', 'spent', 'cost')) { const f = foodCost(today().slice(0, 8) + '01', today()); return `This month: purchases ${aed(f.purchases)}, waste ${aed(f.waste)}, charity ${aed(f.charity)}, missing ${aed(f.missing)}.`; }
-  const calc = q.match(/(-?\d+(?:[.,]\d+)?)\s*([x×*\/+\-]|times|plus|minus|divided by)\s*(-?\d+(?:[.,]\d+)?)/i);
-  if (calc) { const a = num(calc[1]), b = num(calc[3]); const op = calc[2].toLowerCase(); const r = /[x×*]|times/.test(op) ? a * b : /\/|divided/.test(op) ? a / b : /\+|plus/.test(op) ? a + b : a - b; return `${qf(r2(r))}`; }
+  const n = ' ' + norm(q) + ' '; const has = (...w) => w.some(x => n.includes(x)); const site = DEVICE.site; const s = DB.settings();
+  const boss = s.bossName || 'Mr. Ahmed';
+  if (VOICE.user !== boss && has('ahmed') && has('fine', 'good', ' ok', 'well', 'bien', 'here', 'there', 'yes', 'oui', 'hamdulillah', 'hamdoulah', 'labas')) return `Great, I'm happy to hear that ${boss} is well! Please send him my greetings. What can I do for you?`;
+  if (has('help', 'what can you', 'aide', 'quoi faire', 'que peux')) return HELP_TXT;
+  // inspection
+  if (has('inspection', 'inspect', 'grade', 'melissa', 'controle', 'municipal')) {
+    const ins = DB.all('inspections').sort((a, b) => b._ts - a._ts); const i = ins[0];
+    const open = openActions();
+    if (!i) return `No inspection has been saved yet. ${open.length ? open.length + ' open actions.' : ''} When ${s.inspName || 'Melissa'} finishes an inspection, I can summarise it for you.`;
+    const crit = Object.values(i.checks || {}).filter(c => c.st === 'crit').length + (i.items || []).filter(x => x.st === 'expired').length + (i.equip || []).filter(x => x.st === 'broken').length;
+    const warn = Object.values(i.checks || {}).filter(c => c.st === 'warn').length + (i.items || []).filter(x => x.st && !['ok', 'expired'].includes(x.st)).length + (i.equip || []).filter(x => x.st === 'dirty').length;
+    const acts = (i.actions || []).filter(a => !a.done);
+    return `Last inspection: ${fmtD(i.date)} at ${i.site} by ${i.by}. Grade ${i.grade}, ${i.score} percent. ${crit} critical and ${warn} small problems. ` + (acts.length ? `Still open: ${acts.slice(0, 6).map(a => a.text).join('; ')}.` : 'All its actions are fixed.') + (ins.length > 1 ? ` Previous one: grade ${ins[1].grade} on ${fmtD(ins[1].date)}.` : '');
+  }
+  if (has('action', 'not fixed', 'pas fait', 'open task')) { const o = openActions(); return o.length ? `${o.length} open actions: ` + o.slice(0, 8).map(x => `${x.a.text} (${x.a.who || 'everyone'})`).join('; ') + '.' : 'No open actions, everything is fixed.'; }
+  if (has('summary', 'resume', 'today', 'aujourd', 'update', 'news', 'report', 'rapport', 'how is everything', 'tout va')) return dailySummaryText(today()).replace(/\n+/g, '. ').replace(/•|–/g, '');
+  if (has('hello', ' hi ', 'bonjour', 'salam', 'hey', 'how are', 'ca va', 'good morning', 'good evening')) return greeting();
+  if (has('urgent', 'out of stock', 'running low', 'manque', 'rupture', 'low stock', 'order what', 'commander')) { const u = urgentItems(site); return u.length ? `${u.length} urgent items: ` + u.slice(0, 12).map(x => `${x.item.name} (${qf(x.st.stock)} ${x.item.unit})`).join(', ') + '.' : 'No urgent items right now. (The stock count must be done first for this to work.)'; }
+  if (has('expir', 'perim', 'date limite', 'use first')) { const bs = activeBatches().filter(b => b.expiry && daysBetween(today(), b.expiry) <= 1); return bs.length ? 'Expiring today or tomorrow: ' + bs.map(b => `${refName(b.ref)} (${b.site})`).join(', ') + '.' : 'Nothing expires today or tomorrow.'; }
+  if (has('waste', 'gaspill', 'thrown', 'jete', 'poubelle')) { const w = movesIn(today(), today()).filter(m => m.kind === 'waste'); const wm = movesIn(today().slice(0, 8) + '01', today()).filter(m => m.kind === 'waste'); return (w.length ? `Today's waste: ${w.length} entries, ${aed(w.reduce((a, m) => a + num(m.cost), 0))}: ` + w.slice(0, 8).map(m => `${refName(m.ref)} ${qf(m.qty)} ${m.unit} (${m.reason})`).join(', ') + '. ' : 'No waste recorded today. ') + `This month: ${aed(wm.reduce((a, m) => a + num(m.cost), 0))}.`; }
+  if (has('charity', 'charite')) { const c = movesIn(today().slice(0, 8) + '01', today()).filter(m => m.kind === 'charity'); return c.length ? `Charity this month: ${c.length} entries, ${aed(c.reduce((a, m) => a + num(m.cost), 0))}.` : 'No charity recorded this month.'; }
+  if (has('missing', 'manquant', 'vol ', 'theft')) { const m = movesIn(addDays(today(), -30), today()).filter(x => x.kind === 'adj' && num(x.qty) < 0 && !x.start); return m.length ? 'Missing in the last 30 days: ' + m.slice(0, 10).map(x => `${refName(x.ref)} ${qf(-x.qty)} ${x.unit}`).join(', ') + '.' : 'Nothing missing at the last counts.'; }
+  if (has('request', 'demande', 'angie')) { const r = DB.all('requests').filter(x => x.status === 'sent'); return r.length ? `${r.length} kitchen requests waiting for you: ` + r.map(x => `${supName(x.supplierId)} by ${x.by} (${x.lines.length} items)`).join(', ') + '.' : 'No kitchen request waiting.'; }
+  if (has('deliver', 'pending', 'livraison', ' order', 'commande', ' po ')) { const p = DB.all('pos').filter(x => x.status === 'ready'); const rec = DB.all('pos').filter(x => x.status === 'received' && isoDate(x.recvAt) === today()); return (p.length ? `${p.length} deliveries waiting: ` + p.map(x => supName(x.supplierId)).join(', ') + '. ' : 'No delivery waiting. ') + (rec.length ? `Received today: ` + rec.map(x => supName(x.supplierId) + (x.diffCount ? ` with ${x.diffCount} differences` : ' OK')).join(', ') + '.' : ''); }
+  if (has('invoice', 'facture')) { const p = DB.all('pos').filter(x => x.status === 'received' && x.invoiceStatus === 'pending' && x.source !== 'outside'); return p.length ? `${p.length} invoices to enter: ` + p.map(x => supName(x.supplierId)).join(', ') + '.' : 'No invoice waiting.'; }
+  if (has('price', 'prix', 'increase', 'augment')) { const a = DB.all('pricealerts').filter(x => x.status === 'open'); return a.length ? `${a.length} price changes to check: ` + a.slice(0, 8).map(x => `${x.supplier} ${x.item} from ${x.old} to ${x.new}`).join(', ') + '.' : 'No new price changes.'; }
+  if (has('temperature', 'chiller', 'fridge', 'frigo', 'freezer')) { const tp = DB.all('temps').filter(x => x.date === today()); const bad = tp.filter(x => x.alert); return tp.length ? `${tp.length} temperatures recorded today. ` + (bad.length ? 'Alerts: ' + bad.map(x => `${x.site} ${x.name} ${x.temp} degrees`).join(', ') : 'All OK.') : 'No temperatures recorded today yet.'; }
+  if (has('machine', 'coffee', 'cafe', 'tea ', ' the ', 'dishwash', 'broken', 'panne')) { const o = DB.all('eqlogs').filter(l => l.kind === 'problem' && !l.fixed); return o.length ? `${o.length} machine problems: ` + o.map(l => `${l.site} ${l.name}: ${l.note}`).join('; ') + '.' : 'All machines are OK, no open problem.'; }
+  if (has('task', 'tache', 'cleaning', 'nettoyage', 'prep')) { const tl = DB.all('tasklogs').filter(x => x.date === today()); const tot = DB.all('tasks').filter(x => x.active !== false).length; return `Today ${tl.length} tasks were ticked done` + (tl.length ? `, last by ${tl.sort((a, b) => b.ts - a.ts)[0].staff}` : '') + `. There are ${tot} tasks in the list.`; }
+  if (has('production', 'made today', 'prepare')) { const pl = DB.all('prodlogs').filter(l => l.date === today()); const pend = DB.all('prodlogs').filter(l => !l.approval).length; return (pl.length ? 'Today: ' + pl.map(l => `${prodName(l.prodId)} ${qf(l.qty)} ${l.unit} by ${l.resp}`).join(', ') + '. ' : 'No production recorded today. ') + (pend ? `${pend} waiting for approval.` : ''); }
+  if (has('cloud')) { const r = DB.all('ckreq').sort((a, b) => b._ts - a._ts)[0]; const rt = DB.all('ckret').filter(x => x.status === 'sent').length; return (r ? `Last cloud kitchen request ${fmtD(r.date)}: ${r.status}, ${r.lines.length} items. ` : 'No cloud kitchen request yet. ') + (rt ? `${rt} night return waiting to be confirmed.` : ''); }
+  if (has('food cost', 'spend', 'spent', 'cost', 'depense', 'cout', 'purchase', 'achat')) { const f = foodCost(today().slice(0, 8) + '01', today()); return `This month: purchases ${aed(f.purchases)}, used ${aed(f.used)}, waste ${aed(f.waste)}, charity ${aed(f.charity)}, missing ${aed(f.missing)}.`; }
+  if (has('service', 'pest', 'grease')) { const late = DB.all('services').filter(x => { const l = lastVisit(x.id); return x.active !== false && l && addDays(l.date, x.freqDays || 30) < today(); }); return late.length ? 'Late service visits: ' + late.map(x => x.name).join(', ') + '.' : 'No service visit is late.'; }
+  const calc = q.match(/(-?\d+(?:[.,]\d+)?)\s*([x×*\/+\-]|times|fois|plus|minus|moins|divided by|divise par)\s*(-?\d+(?:[.,]\d+)?)/i);
+  if (calc) { const a = num(calc[1]), b = num(calc[3]); const op = calc[2].toLowerCase(); const r = /[x×*]|times|fois/.test(op) ? a * b : /\/|divid/.test(op) ? a / b : /\+|plus/.test(op) ? a + b : a - b; return `${qf(r2(r))}`; }
   const o = findRef(q);
-  if (o) { if (o.prices !== undefined) { const st = itemStatus(site, o); return `${o.name}: ${qf(st.stock)} ${o.unit} in stock${st.cover != null ? `, enough for about ${Math.floor(st.cover)} days` : ''}. Supplier ${supName(o.cur)}, last price ${aed(itemPrice(o))}.`; } const st = stockOf(site, 'pr:' + o.id); return `${o.name}: ${qf(st)} ${o.unit || 'kg'} in stock. Lasts ${o.shelf || '?'} days. Responsible: ${o.resp || 'not set'}.`; }
-  return "Sorry, I can't answer that yet. Try: urgent items, stock of tomato, what expires, today's waste, pending deliveries, inspection, price changes, temperatures, food cost.";
+  if (o) { if (o.prices !== undefined) { const st = itemStatus(site, o); const w = wasteMissing(site, 'it:' + o.id, addDays(today(), -30)); return `${o.name}: ${st.level === 'unknown' ? 'not counted yet' : qf(st.stock) + ' ' + o.unit + ' in stock'}${st.cover != null ? `, enough for about ${Math.floor(st.cover)} days` : ''}. Supplier ${supName(o.cur)}, last price ${aed(itemPrice(o))}.${w.waste ? ` Waste last 30 days: ${qf(w.waste)} ${o.unit}.` : ''}`; } const st = stockOf(site, 'pr:' + o.id); const last = DB.all('prodlogs').filter(l => l.prodId === o.id).sort((a, b) => b.ts - a.ts)[0]; return `${o.name}: ${qf(st)} ${o.unit || 'kg'} in stock, lasts ${o.shelf || '?'} days. Responsible: ${o.resp || 'not set'}.${last ? ` Last made ${fmtD(last.date)} by ${last.resp}.` : ''}`; }
+  return "I didn't understand that one. " + HELP_TXT;
 }
+const HELP_TXT = "You can ask me: today's summary, the last inspection, open actions, urgent items, what expires, today's waste, missing items, kitchen requests, deliveries, invoices, price changes, temperatures, machines, tasks, productions, cloud kitchen, this month's cost, or the stock of any item, for example: how much tomato do we have.";
 async function askAI(q) {
   const s = DB.settings();
   const ctx = { date: today(), site: DEVICE.site, urgent: urgentItems('Aljada').slice(0, 30).map(u => ({ item: u.item.name, stock: u.st.stock, unit: u.item.unit, days: u.st.cover })), expiring: activeBatches().filter(b => b.expiry && daysBetween(today(), b.expiry) <= 2).map(b => ({ item: refName(b.ref), site: b.site, expiry: b.expiry })), pendingDeliveries: DB.all('pos').filter(p => p.status === 'ready').map(p => supName(p.supplierId)), today: dailySummaryText(today()), month: foodCost(today().slice(0, 8) + '01', today()), priceAlerts: DB.all('pricealerts').filter(a => a.status === 'open').slice(0, 20), lastInspection: (() => { const i = DB.all('inspections').sort((a, b) => b._ts - a._ts)[0]; return i ? inspectionText(i) : null; })() };
