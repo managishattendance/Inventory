@@ -259,7 +259,7 @@ function loadScript(src) { return new Promise((res, rej) => { if ($(`script[src=
 /* ---------- default settings & seed ---------- */
 function defaultSettings() {
   return {
-    id: 'main', adminPw: '', inspPw: '', voiceCode: '', bossVoiceCode: '', ownerName: 'Lydia', bossName: 'Mr. Ahmed',
+    id: 'main', adminPw: '', inspPw: '', voiceCode: '', bossVoiceCode: '', ownerName: 'Lydia', bossName: 'Mr. Ahmed', inspName: 'Melissa',
     emails: ['rmanagish@gmail.com'], inspEmails: [], whatsapp: '+213557085329', waGroup: 'Kit2',
     orderDays: { 1: 'Dry goods + Meat, Chicken, Eggs', 3: 'Chicken only', 5: 'Meat, Chicken, Eggs' },
     receivers: ['Lydia', 'Melissa', 'Angie', 'Desire', 'MJ', 'Bianka'],
@@ -434,7 +434,7 @@ DB.on(() => { if (_rerenderLock || $('#mdl') || document.activeElement && ['INPU
 function softRefresh() { const y = window.scrollY; render(); window.scrollTo(0, y); }
 
 function renderTop() {
-  const s = DB.settings(); const role = SESSION ? (SESSION.role === 'admin' ? 'Admin · ' + SESSION.name : 'Inspection · ' + SESSION.name) : t('Kitchen');
+  const s = DB.settings(); const role = SESSION ? (SESSION.role === 'admin' ? 'Admin · ' + SESSION.name : 'Manager Inspection · ' + SESSION.name) : t('Kitchen');
   $('#top').innerHTML = `<div class="brand" onclick="go('#/')">🍽️ MANAGISH <span class="badge-site">${esc(DEVICE.site)}</span><small>${esc(role)}<br><span id="sync"></span></small></div>
   <button onclick="openVoice()" title="Voice">🎤</button>
   <button onclick="switchLang()">${DEVICE.lang === 'ar' ? 'EN' : 'عربي'}</button>
@@ -446,7 +446,7 @@ function logout() { SESSION = null; go('#/'); }
 
 /* ---------- login ---------- */
 function loginMenu() {
-  const b = modal('Login', `<div class="tiles"><div class="tile" id="la"><div class="ic">⚙️</div><div class="tt">Admin (Lydia)</div></div><div class="tile" id="li"><div class="ic">🔍</div><div class="tt">Inspection (Melissa)</div></div></div>
+  const b = modal('Login', `<div class="tiles"><div class="tile" id="la"><div class="ic">⚙️</div><div class="tt">Admin (Lydia)</div></div><div class="tile" id="li"><div class="ic">🔍</div><div class="tt">Manager Inspection (${esc(DB.settings().inspName || 'Melissa')})</div></div></div>
   <h3>This tablet</h3><label class="f">Site of this tablet</label><div class="seg" id="sitesel">${DB.settings().sites.map(s => `<button class="${DEVICE.site === s ? 'on' : ''}" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>`);
   $('#la', b).onclick = () => pwLogin('admin'); $('#li', b).onclick = () => pwLogin('insp');
   $$('#sitesel button', b).forEach(x => x.onclick = () => { DEVICE.site = x.dataset.s; saveDevice(); closeModal(); render(); toast('This tablet is now: ' + DEVICE.site); });
@@ -455,7 +455,7 @@ function pwLogin(role) {
   const s = DB.settings(); const key = role === 'admin' ? 'adminPw' : 'inspPw';
   const first = !s[key];
   if (first && role === 'insp') { if (!s.adminPw) { toast('Lydia must create the admin password first'); return pwLogin('admin'); } toast('Melissa\'s password is created by the admin in Settings'); return; }
-  const b = modal(role === 'admin' ? 'Admin login' : 'Inspection login', `${first ? '<div class="alert bl">First time: create the admin password (min 4 characters). Keep it secret.</div>' : ''}
+  const b = modal(role === 'admin' ? 'Admin login' : 'Manager Inspection – ' + (s.inspName || 'Melissa'), `${first ? '<div class="alert bl">First time: create the admin password (min 4 characters). Keep it secret.</div>' : ''}
   <label class="f">Password</label><input class="i" type="password" id="pw" autocomplete="off">${first ? '<label class="f">Repeat password</label><input class="i" type="password" id="pw2">' : ''}
   <div style="margin-top:14px"><button class="btn big" id="ok">Login</button></div>`);
   setTimeout(() => $('#pw', b).focus(), 50);
@@ -463,7 +463,7 @@ function pwLogin(role) {
     const p = $('#pw', b).value;
     if (first) { if (p.length < 4 || p !== $('#pw2', b).value) return toast('Passwords must match (min 4)'); DB.saveSettings({ [key]: hashPw(p) }); }
     else if (hashPw(p) !== s[key]) return toast('Wrong password');
-    SESSION = { role, name: role === 'admin' ? (s.ownerName || 'Lydia') : 'Melissa' }; closeModal(); resetIdle(); go(role === 'admin' ? '#/admin' : '#/insp');
+    SESSION = { role, name: role === 'admin' ? (s.ownerName || 'Lydia') : (s.inspName || 'Melissa') }; closeModal(); resetIdle(); go(role === 'admin' ? '#/admin' : '#/insp');
   };
   $('#ok', b).onclick = doIt; $('#pw', b).onkeydown = e => { if (e.key === 'Enter' && !first) doIt(); };
 }
@@ -1013,7 +1013,7 @@ route('/insp', (el, parts) => {
   if (parts[0] === 'view') return viewInspection(el, parts[1]);
   const pend = DB.all('prodlogs').filter(l => !l.approval).sort((a, b) => b.ts - a.ts);
   const ins = DB.all('inspections').sort((a, b) => b._ts - a._ts);
-  el.innerHTML = `<h1>🔍 Inspection</h1><div class="tiles"><div class="tile" onclick="go('#/insp/new')"><div class="ic">📝</div><div class="tt">New inspection · ${esc(DEVICE.site)}</div></div>
+  el.innerHTML = `<h1>🔍 Manager Inspection</h1><div class="tiles"><div class="tile" onclick="go('#/insp/new')"><div class="ic">📝</div><div class="tt">New inspection · ${esc(DEVICE.site)}</div></div>
   <div class="tile" onclick="approvalsList()"><div class="ic">🥣</div><div class="tt">Production approval</div>${pend.length ? `<span class="bd">${pend.length}</span>` : ''}</div>
   <div class="tile" onclick="go('#/actions')"><div class="ic">⚠️</div><div class="tt">Open actions</div>${openActions().length ? `<span class="bd">${openActions().length}</span>` : ''}</div></div>
   <h2>Reports</h2><div class="list">${ins.map(i => `<div class="li" onclick="go('#/insp/view/${i.id}')"><div class="grow"><div class="nm">${fmtD(i.date)} · ${esc(i.site)} · Grade ${esc(i.grade)} (${i.score}%)</div><div class="sub">${esc(i.by)} · ${(i.actions || []).filter(a => !a.done).length} open actions</div></div><span>›</span></div>`).join('') || '<div class="li muted">No inspection yet.</div>'}</div>`;
@@ -1803,7 +1803,7 @@ ADMIN.reports = el => {
 ADMIN.settings = el => {
   const s = DB.settings();
   el.innerHTML = `<h1>Settings</h1>
-  <div class="card"><h3 style="margin-top:0">🔐 Passwords & codes</h3><div class="row"><button class="btn w" id="pa">Change admin password</button><button class="btn w" id="pi">${s.inspPw ? 'Change' : 'Create'} Melissa's inspection password</button><button class="btn w" id="pv">${s.voiceCode ? 'Change' : 'Create'} my voice code</button><button class="btn w" id="pb">${s.bossVoiceCode ? 'Change' : 'Create'} ${esc(s.bossName || 'Mr. Ahmed')}'s voice code</button></div><label class="f">Owner name for the voice (asked about in the greeting)</label><input class="i" id="bn" value="${esc(s.bossName || 'Mr. Ahmed')}" style="max-width:300px"></div>
+  <div class="card"><h3 style="margin-top:0">🔐 Passwords & codes</h3><div class="row"><button class="btn w" id="pa">Change admin password</button><button class="btn w" id="pi">${s.inspPw ? 'Change' : 'Create'} ${esc(s.inspName || 'Melissa')}'s inspection password</button><button class="btn w" id="pv">${s.voiceCode ? 'Change' : 'Create'} my voice code</button><button class="btn w" id="pb">${s.bossVoiceCode ? 'Change' : 'Create'} ${esc(s.bossName || 'Mr. Ahmed')}'s voice code</button></div><label class="f">Manager doing the inspection</label><input class="i" id="inn" value="${esc(s.inspName || 'Melissa')}" style="max-width:300px"><label class="f">Owner name for the voice (asked about in the greeting)</label><input class="i" id="bn" value="${esc(s.bossName || 'Mr. Ahmed')}" style="max-width:300px"></div>
   <div class="card"><h3 style="margin-top:0">✉️ Emails & WhatsApp</h3><label class="f">Report emails (one per line)</label><textarea class="i" id="em">${esc((s.emails || []).join('\n'))}</textarea><label class="f">Inspection report – extra emails (Melissa…)</label><textarea class="i" id="ie">${esc((s.inspEmails || []).join('\n'))}</textarea>
   <div class="grid2"><div><label class="f">My WhatsApp number (Kitchen Requests)</label><input class="i" id="wa" value="${esc(s.whatsapp || '')}"></div><div><label class="f">WhatsApp group for reports</label><input class="i" id="wg" value="${esc(s.waGroup || '')}"></div></div>
   <details style="margin-top:10px"><summary><b>Automatic daily email (EmailJS)</b></summary><p class="small muted">Without this, emails open in the mail app. With a free EmailJS account the daily report is sent automatically after the hour below (when a tablet is on).</p><div class="grid2"><input class="i" id="ej1" placeholder="Service ID" value="${esc(s.emailjs.service || '')}"><input class="i" id="ej2" placeholder="Template ID" value="${esc(s.emailjs.template || '')}"><input class="i" id="ej3" placeholder="Public key" value="${esc(s.emailjs.key || '')}"><input class="i" id="ejh" type="number" placeholder="Hour (23)" value="${s.dailyEmailHour || 23}"></div></details>
@@ -1817,7 +1817,7 @@ ADMIN.settings = el => {
   <div class="card"><h3 style="margin-top:0">💾 Backup</h3><div class="row"><button class="btn w" id="bk">⬇️ Download backup</button><button class="btn w" id="rs">⬆️ Restore backup</button></div></div>
   <details class="card"><summary><b>Emergency</b></summary><p class="small muted">Hidden pause switch (backup if the chat with Claude is not available).</p><button class="btn ${s.paused ? 'g' : 'r'}" id="pz">${s.paused ? '▶️ Resume the system' : '⏸️ Pause the system'}</button></details>`;
   const pwSet = (key, label) => { const b = modal(label, `<label class="f">New</label><input class="i" type="password" id="p1"><label class="f">Repeat</label><input class="i" type="password" id="p2"><div style="margin-top:12px"><button class="btn big" id="ok">Save</button></div>`); $('#ok', b).onclick = () => { const a = $('#p1', b).value; if (a.length < 4 || a !== $('#p2', b).value) return toast('Must match (min 4)'); DB.saveSettings({ [key]: hashPw(a) }); closeModal(); toast('Saved'); render(); }; };
-  $('#pa').onclick = () => pwSet('adminPw', 'Admin password'); $('#pi').onclick = () => pwSet('inspPw', 'Melissa\'s inspection password'); $('#pv').onclick = () => pwSet('voiceCode', 'Voice code'); $('#pb').onclick = () => pwSet('bossVoiceCode', (s.bossName || 'Mr. Ahmed') + '\'s voice code'); $('#bn').onchange = e => { DB.saveSettings({ bossName: e.target.value.trim() || 'Mr. Ahmed' }); toast('Saved'); };
+  $('#pa').onclick = () => pwSet('adminPw', 'Admin password'); $('#pi').onclick = () => pwSet('inspPw', (s.inspName || 'Melissa') + '\'s inspection password'); $('#pv').onclick = () => pwSet('voiceCode', 'Voice code'); $('#pb').onclick = () => pwSet('bossVoiceCode', (s.bossName || 'Mr. Ahmed') + '\'s voice code'); $('#inn').onchange = e => { DB.saveSettings({ inspName: e.target.value.trim() || 'Melissa' }); toast('Saved'); }; $('#bn').onchange = e => { DB.saveSettings({ bossName: e.target.value.trim() || 'Mr. Ahmed' }); toast('Saved'); };
   const lines = id => $(id).value.split('\n').map(x => x.trim()).filter(Boolean);
   $('#sv1').onclick = () => { DB.saveSettings({ emails: lines('#em'), inspEmails: lines('#ie'), whatsapp: $('#wa').value.trim(), waGroup: $('#wg').value.trim(), emailjs: { service: $('#ej1').value.trim(), template: $('#ej2').value.trim(), key: $('#ej3').value.trim() }, dailyEmailHour: num($('#ejh').value) || 23 }); toast('Saved'); };
   $('#sv2').onclick = () => { const p = { chillerMax: num($('#cm').value), freezerMax: num($('#fm').value), usageDays: num($('#ud').value) || 14, ownerName: $('#on').value.trim() || 'Lydia', orderDays: {} }; $$('[data-l]').forEach(x => p[x.dataset.l] = x.value.split('\n').map(y => y.trim()).filter(Boolean)); $$('[data-od]').forEach(x => { if (x.value.trim()) p.orderDays[x.dataset.od] = x.value.trim(); }); DB.saveSettings(p); toast('Saved'); };
